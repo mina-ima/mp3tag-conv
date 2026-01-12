@@ -118,18 +118,36 @@ const App: React.FC = () => {
   const inferAllMetadata = async () => {
     setIsInferring(true);
     const updatedFiles = await Promise.all(files.map(async (f) => {
-      // 既にメタデータがある場合でも、AIで再推測
       const aiResult = await inferMetadataWithAI(f.name, f.folderName);
       return {
         ...f,
         metadata: {
-          ...(f.metadata || { originalEncoding: 'Shift-JIS', title: f.name, artist: '不明', album: f.folderName || '不明' }),
-          ...aiResult
+          originalEncoding: 'UTF-8' as any,
+          title: aiResult.title || f.name.replace(/\.[^/.]+$/, ""),
+          artist: aiResult.artist || "不明",
+          album: aiResult.album || f.folderName || "不明"
         }
       };
     }));
     setFiles(updatedFiles);
     setIsInferring(false);
+  };
+
+  const resetToFilename = (id: string) => {
+    setFiles(prev => prev.map(f => {
+      if (f.id === id) {
+        return {
+          ...f,
+          metadata: {
+            title: f.name.replace(/\.[^/.]+$/, ""),
+            artist: "不明",
+            album: f.folderName || "不明",
+            originalEncoding: 'UTF-8' as any
+          }
+        };
+      }
+      return f;
+    }));
   };
 
   const startProcessing = async () => {
@@ -138,7 +156,7 @@ const App: React.FC = () => {
       const f = files[i];
       setFiles(prev => prev.map(item => item.id === f.id ? { ...item, status: 'processing' } : item));
       try {
-        // メタデータがまだない場合（AI推測してない場合）のみパース
+        // メタデータがまだない場合、ファイルから読み取る（この時にUTF-8優先ガードが働く）
         const metadata = f.metadata || await parseMetadata(f.file, f.folderName);
         const fixedBlob = await fixFileTags(f.file, metadata);
         setFiles(prev => prev.map(item => item.id === f.id ? { ...item, status: 'completed', metadata, fixedBlob } : item));
@@ -170,11 +188,16 @@ const App: React.FC = () => {
     }
   };
 
+  const clearFiles = () => {
+    setFiles([]);
+    setStatus(AppStatus.IDLE);
+  };
+
   return (
     <div className="min-h-screen p-4 md:p-8 max-w-5xl mx-auto">
       <header className="mb-8 text-center">
         <h1 className="text-3xl font-bold text-slate-800 mb-2">🚗 Car Audio Tag Fixer</h1>
-        <p className="text-slate-600 font-medium">文字化けを直し、AIで曲名・アーティストをきれいに整理します。</p>
+        <p className="text-slate-600 font-medium">Windowsで正しく見えるファイル名を最優先して、タグを美しく修正します。</p>
       </header>
 
       <main className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200">
@@ -188,7 +211,7 @@ const App: React.FC = () => {
             <div className="flex flex-col items-center text-center">
               <div className={`p-4 rounded-full mb-4 transition-transform duration-300 ${isDragging ? 'scale-125' : ''}`}><MusicIcon /></div>
               <h2 className="text-xl font-semibold text-slate-700">ファイルまたはフォルダをドロップ</h2>
-              <p className="text-slate-400 text-sm mt-1">MP3ファイルのみ対応</p>
+              <p className="text-slate-400 text-sm mt-1">Windowsで正しく見えているファイルをそのまま追加してください</p>
             </div>
             <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md">
               <button onClick={() => fileInputRef.current?.click()} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-white border border-slate-200 rounded-xl hover:border-blue-500 hover:text-blue-600 transition-all font-medium text-slate-600">ファイルを選択</button>
@@ -205,8 +228,9 @@ const App: React.FC = () => {
               <span className="text-sm font-bold bg-slate-100 px-3 py-1 rounded-full text-slate-600">{files.length} 曲</span>
               <button onClick={inferAllMetadata} disabled={isInferring || status === AppStatus.PROCESSING} className="flex items-center gap-1.5 text-sm font-bold text-amber-600 hover:text-amber-700 disabled:opacity-50">
                 <SparklesIcon />
-                {isInferring ? 'AI解析中...' : 'AIで情報を推測・整理'}
+                {isInferring ? 'ファイル名からAI解析中...' : 'ファイル名を元にAIで整理'}
               </button>
+              <button onClick={clearFiles} className="text-xs text-red-400 hover:text-red-600 ml-2">すべてクリア</button>
             </div>
             
             <div className="flex gap-2">
@@ -229,34 +253,42 @@ const App: React.FC = () => {
             <table className="w-full text-left border-collapse">
               <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
                 <tr>
-                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">ファイル</th>
-                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">メタデータ (書き込み内容)</th>
-                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider">状態</th>
+                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">元ファイル</th>
+                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">書き込み予定のタグ</th>
+                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">操作</th>
+                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">状態</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {files.map(f => (
                   <tr key={f.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-slate-800 truncate max-w-[200px]">{f.name}</div>
-                      <div className="text-[10px] text-slate-400 font-mono">{f.folderName || 'Root'}</div>
+                      <div className="text-sm font-medium text-slate-800 truncate max-w-[180px]" title={f.name}>{f.name}</div>
+                      <div className="text-[10px] text-slate-400 font-mono truncate max-w-[180px]">{f.folderName || 'Root'}</div>
                     </td>
                     <td className="px-6 py-4">
                       {f.metadata ? (
-                        <div className="text-[11px] leading-tight max-w-[250px] relative">
-                          <div className="font-bold text-slate-700 flex items-center gap-1">
-                            {f.metadata.title}
-                          </div>
+                        <div className="text-[11px] leading-tight max-w-[250px]">
+                          <div className="font-bold text-slate-700">{f.metadata.title}</div>
                           <div className="text-blue-500 mt-0.5">{f.metadata.artist}</div>
                           <div className="text-slate-400 italic">{f.metadata.album}</div>
                         </div>
                       ) : (
-                        <span className="text-[10px] text-slate-300 italic">未解析 (変換時に自動解析)</span>
+                        <span className="text-[10px] text-slate-300 italic">自動解析待ち...</span>
                       )}
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <button 
+                        onClick={() => resetToFilename(f.id)}
+                        title="既存タグを無視してファイル名を採用"
+                        className="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded transition-colors whitespace-nowrap"
+                      >
+                        ファイル名優先
+                      </button>
                     </td>
                     <td className="px-6 py-4">
                       {f.status === 'processing' ? (
-                        <div className="flex items-center gap-1.5"><div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div></div>
+                        <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                       ) : f.status === 'completed' ? (
                         <CheckCircleIcon />
                       ) : f.status === 'error' ? (
@@ -273,14 +305,26 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      <footer className="mt-12 text-center text-slate-400 text-sm max-w-2xl mx-auto">
-        <div className="p-5 bg-amber-50 rounded-2xl border border-amber-100 text-slate-700 text-left mb-4">
-          <h3 className="font-bold mb-2 flex items-center gap-2 text-amber-700">
-            ✨ AIメタデータ整理とは？
-          </h3>
-          <p className="text-xs leading-relaxed">
-            ファイル名が <code>01_SongName_Artist.mp3</code> のようにバラバラでも、Gemini AIが文脈を読み取って正しい「曲名」「アーティスト名」に自動的に割り振ります。カーオーディオの画面にきれいに表示させたい場合におすすめです。
-          </p>
+      <footer className="mt-12 text-center text-slate-400 text-sm max-w-3xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+          <div className="p-5 bg-blue-50 rounded-2xl border border-blue-100 text-slate-700 text-left">
+            <h3 className="font-bold mb-2 text-blue-700 flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              文字化け防止の仕組み
+            </h3>
+            <p className="text-[11px] leading-relaxed">
+              既存のタグがUTF-8かShift-JISかを自動判定し、不適切な変換を防止します。Windowsで正しく見える情報は「ファイル名」に集約されていることが多いため、AIボタンを使うとファイル名を解析してタグを再構築します。
+            </p>
+          </div>
+          <div className="p-5 bg-amber-50 rounded-2xl border border-amber-100 text-slate-700 text-left">
+            <h3 className="font-bold mb-2 text-amber-700 flex items-center gap-2">
+              <SparklesIcon />
+              ファイル名優先ボタン
+            </h3>
+            <p className="text-[11px] leading-relaxed">
+              もし解析結果が文字化けしている場合は、表の中の「ファイル名優先」ボタンを押してください。内部の壊れたタグを無視し、エクスプローラーで見えている正しい名称をタグとして採用します。
+            </p>
+          </div>
         </div>
         <p>© 2024 Music Tag Fixer Utility</p>
       </footer>
