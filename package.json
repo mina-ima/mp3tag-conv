@@ -12,7 +12,8 @@
     "react-dom": "^19.2.3",
     "react": "^19.2.3",
     "jszip": "3.10.1",
-    "browser-id3-writer": "4.4.0"
+    "browser-id3-writer": "4.4.0",
+    "@google/genai": "^1.35.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

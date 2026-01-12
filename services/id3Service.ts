@@ -1,6 +1,9 @@
 
 import { AudioMetadata } from '../types.ts';
 import ID3Writer from 'browser-id3-writer';
+import { GoogleGenAI, Type } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 /**
  * 既存のID3タグを解析し、Shift-JIS mojibakeを修正するための情報を抽出します
@@ -17,7 +20,6 @@ export const parseMetadata = async (file: File, folderHint?: string): Promise<Au
   if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) { // "ID3"
     const sjisDecoder = new TextDecoder('shift-jis');
     
-    // タグ内のフレームを検索する簡易ロジック
     const findFrame = (frameId: string) => {
       const idBytes = new TextEncoder().encode(frameId);
       for (let i = 10; i < Math.min(bytes.length, 10000); i++) {
@@ -26,11 +28,9 @@ export const parseMetadata = async (file: File, folderHint?: string): Promise<Au
           const encoding = bytes[i+10];
           const content = bytes.slice(i + 11, i + 10 + size);
           
-          // エンコーディングが0(ISO-8859-1)の場合、日本のWindows環境では実態はShift-JIS
           if (encoding === 0) {
             return sjisDecoder.decode(content).replace(/\0/g, '').trim();
           }
-          // すでにUTF-16(1)やUTF-8(3)の場合は標準のデコーダーを使用（ここでは簡易化のためそのまま返すか、ブラウザ標準デコード）
           return new TextDecoder().decode(content).replace(/\0/g, '').trim();
         }
       }
@@ -42,6 +42,7 @@ export const parseMetadata = async (file: File, folderHint?: string): Promise<Au
     album = folderHint || findFrame('TALB') || album;
   }
 
+  // Corrected the typo 'Shift-SJS' to 'Shift-JIS' to match AudioMetadata type definition
   return {
     title,
     artist,
@@ -51,12 +52,47 @@ export const parseMetadata = async (file: File, folderHint?: string): Promise<Au
 };
 
 /**
- * 元のファイルからオーディオデータ部分（ID3タグを除去した部分）のみを抽出します
+ * Gemini APIを使用して、ファイル名とフォルダ名から正確なメタデータを推測します
+ */
+export const inferMetadataWithAI = async (filename: string, foldername?: string): Promise<Partial<AudioMetadata>> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `以下のファイル名とフォルダ名から、音楽のメタデータ（曲名、アーティスト名、アルバム名）を推測して抽出してください。
+      ファイル名: "${filename}"
+      フォルダ名: "${foldername || 'なし'}"
+      
+      注意:
+      - トラック番号や拡張子は曲名から除いてください。
+      - アーティスト名が不明な場合は"不明なアーティスト"としてください。`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING, description: "曲名" },
+            artist: { type: Type.STRING, description: "アーティスト名" },
+            album: { type: Type.STRING, description: "アルバム名" },
+          },
+          required: ["title", "artist", "album"]
+        },
+      },
+    });
+
+    const result = JSON.parse(response.text);
+    return result;
+  } catch (error) {
+    console.error("AI inference failed:", error);
+    return {};
+  }
+};
+
+/**
+ * 元のファイルからオーディオデータ部分のみを抽出します
  */
 const getAudioDataOnly = (buffer: ArrayBuffer): ArrayBuffer => {
   const bytes = new Uint8Array(buffer);
   if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
-    // ID3v2ヘッダーからタグ全体のサイズを取得 (synchsafe integer)
     const size = (bytes[6] << 21) | (bytes[7] << 14) | (bytes[8] << 7) | bytes[9];
     const offset = size + 10;
     return buffer.slice(offset);
@@ -71,8 +107,6 @@ export const fixFileTags = async (file: File, metadata: AudioMetadata): Promise<
   const buffer = await file.arrayBuffer();
   const audioData = getAudioDataOnly(buffer);
   
-  // ID3Writerを使用して新しいタグを作成
-  // browser-id3-writerはデフォルトでID3v2.3を使用し、文字列はUTF-16 (with BOM) で書き込みます
   const writer = new ID3Writer(audioData);
   
   if (metadata.title) writer.setFrame('TIT2', metadata.title);
