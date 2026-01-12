@@ -1,5 +1,5 @@
 
-import { AudioMetadata } from '../types';
+import { AudioMetadata } from '../types.ts';
 
 /**
  * Since we can't easily include heavy binary libraries without complex build steps,

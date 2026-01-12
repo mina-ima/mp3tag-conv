@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback, useRef } from 'react';
-import { ProcessingFile, AppStatus } from './types';
-import { parseMetadata, fixFileTags } from './services/id3Service';
+import { ProcessingFile, AppStatus } from './types.ts';
+import { parseMetadata, fixFileTags } from './services/id3Service.ts';
 import JSZip from 'jszip';
 
 // Standard icons as functional components
@@ -101,7 +101,6 @@ const App: React.FC = () => {
       const zip = new JSZip();
       
       completedFiles.forEach(f => {
-        // Use the original name or a prefix to indicate it's fixed
         const fileName = f.name.startsWith('fixed_') ? f.name : `fixed_${f.name}`;
         zip.file(fileName, f.fixedBlob!);
       });
@@ -139,7 +138,6 @@ const App: React.FC = () => {
       </header>
 
       <main className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200">
-        {/* Upload Zone */}
         <div className="p-8 border-b border-slate-100 bg-slate-50/50">
           <div className="flex flex-col md:flex-row gap-4 items-center justify-center">
             <button
@@ -181,7 +179,6 @@ const App: React.FC = () => {
           </p>
         </div>
 
-        {/* Action Bar */}
         {files.length > 0 && (
           <div className="px-6 py-4 bg-white border-b border-slate-100 flex flex-wrap justify-between items-center gap-4">
             <div className="flex items-center gap-4">
@@ -225,7 +222,6 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* File List */}
         <div className="max-h-[60vh] overflow-y-auto">
           {files.length === 0 ? (
             <div className="py-20 flex flex-col items-center text-slate-400">
