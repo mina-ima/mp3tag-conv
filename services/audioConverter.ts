@@ -29,8 +29,6 @@ export const convertWmaToMp3 = async (
   });
 
   await instance.writeFile(inputName, await fetchFile(file));
-  
-  // Convert to 192kbps MP3
   await instance.exec(['-i', inputName, '-b:a', '192k', outputName]);
   
   const data = await instance.readFile(outputName);
@@ -38,37 +36,94 @@ export const convertWmaToMp3 = async (
 };
 
 /**
- * 長い音声を一定時間ごとに分割する（オプション用）
+ * 無音部分を検出して分割ポイント（秒）のリストを返す
+ */
+const detectSilencePoints = async (instance: FFmpeg, fileName: string): Promise<number[]> => {
+  const silencePoints: number[] = [];
+  const logHandler = ({ message }: { message: string }) => {
+    // ログから silence_start と silence_end を探す
+    // 例: [silencedetect @ 0x...] silence_start: 125.2
+    const startMatch = message.match(/silence_start: ([\d.]+)/);
+    const endMatch = message.match(/silence_end: ([\d.]+)/);
+    
+    if (startMatch) {
+      silencePoints.push(parseFloat(startMatch[1]));
+    }
+    if (endMatch && silencePoints.length > 0) {
+      // 開始と終了の中間点を分割点とする
+      const start = silencePoints[silencePoints.length - 1];
+      const end = parseFloat(endMatch[1]);
+      silencePoints[silencePoints.length - 1] = (start + end) / 2;
+    }
+  };
+
+  instance.on('log', logHandler);
+  
+  // 無音検出フィルタを実行 (2秒以上の無音、-30dB以下)
+  await instance.exec([
+    '-i', fileName, 
+    '-af', 'silencedetect=noise=-30dB:d=2', 
+    '-f', 'null', '-'
+  ]);
+
+  instance.off('log', logHandler);
+  return silencePoints;
+};
+
+/**
+ * 音声を分割する（固定時間 または 無音検出）
  */
 export const splitMp3 = async (
   file: File | Blob, 
-  segmentTime: number, // 秒
+  mode: number | 'silence', 
   onProgress: (progress: number) => void
 ): Promise<Blob[]> => {
   const instance = await loadFFmpeg();
-  const inputName = 'input_large.mp3';
-  
+  const inputName = 'input_split.mp3';
   await instance.writeFile(inputName, await fetchFile(file));
-  
-  // %03d.mp3 形式で連番出力
-  await instance.exec([
-    '-i', inputName, 
-    '-f', 'segment', 
-    '-segment_time', segmentTime.toString(), 
-    '-c', 'copy', 
-    'out%03d.mp3'
-  ]);
+
+  let splitArgs: string[] = [];
+
+  if (mode === 'silence') {
+    const points = await detectSilencePoints(instance, inputName);
+    if (points.length === 0) return [new Blob([await file.arrayBuffer()], { type: 'audio/mpeg' })];
+    
+    // カンマ区切りのタイムスタンプ文字列を作成
+    const timeStr = points.join(',');
+    splitArgs = [
+      '-i', inputName,
+      '-f', 'segment',
+      '-segment_times', timeStr,
+      '-c', 'copy',
+      'out%03d.mp3'
+    ];
+  } else {
+    // 固定時間分割
+    splitArgs = [
+      '-i', inputName,
+      '-f', 'segment',
+      '-segment_time', mode.toString(),
+      '-c', 'copy',
+      'out%03d.mp3'
+    ];
+  }
+
+  await instance.exec(splitArgs);
 
   const files = await instance.listDir('.');
   const blobs: Blob[] = [];
   
-  for (const f of files) {
-    if (f.name.startsWith('out') && f.name.endsWith('.mp3')) {
-      const data = await instance.readFile(f.name);
-      blobs.push(new Blob([(data as Uint8Array).buffer], { type: 'audio/mpeg' }));
-      await instance.deleteFile(f.name);
-    }
+  // アルファベット順にソートして連番を維持
+  const outFiles = files
+    .filter(f => f.name.startsWith('out') && f.name.endsWith('.mp3'))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const f of outFiles) {
+    const data = await instance.readFile(f.name);
+    blobs.push(new Blob([(data as Uint8Array).buffer], { type: 'audio/mpeg' }));
+    await instance.deleteFile(f.name);
   }
   
+  await instance.deleteFile(inputName);
   return blobs;
 };
