@@ -11,6 +11,7 @@ export interface ProcessingFile {
   file: File;
   name: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
+  folderName?: string; // Stores the immediate parent folder name
   metadata?: AudioMetadata;
   fixedBlob?: Blob;
   error?: string;

@@ -41,12 +41,25 @@ const App: React.FC = () => {
     
     const newFiles: ProcessingFile[] = Array.from(fileList)
       .filter(file => file.type === 'audio/mpeg' || file.name.endsWith('.mp3'))
-      .map(file => ({
-        id: Math.random().toString(36).substr(2, 9),
-        file,
-        name: file.name,
-        status: 'pending'
-      }));
+      .map(file => {
+        // Extract folder name from path if available (webkitRelativePath)
+        let folderName: string | undefined = undefined;
+        if ((file as any).webkitRelativePath) {
+          const pathParts = (file as any).webkitRelativePath.split('/');
+          if (pathParts.length > 1) {
+            // Get the immediate parent folder of the file
+            folderName = pathParts[pathParts.length - 2];
+          }
+        }
+
+        return {
+          id: Math.random().toString(36).substr(2, 9),
+          file,
+          name: file.name,
+          folderName,
+          status: 'pending'
+        };
+      });
 
     setFiles(prev => [...prev, ...newFiles]);
   }, []);
@@ -67,8 +80,9 @@ const App: React.FC = () => {
       ));
 
       try {
-        const metadata = await parseMetadata(f.file);
-        const fixedBlob = await fixFileTags(f.file);
+        // Pass folderName to parseMetadata so it can be used as Album name
+        const metadata = await parseMetadata(f.file, f.folderName);
+        const fixedBlob = await fixFileTags(f.file, metadata);
         
         setFiles(prev => prev.map(item => 
           item.id === f.id ? { 
@@ -101,7 +115,8 @@ const App: React.FC = () => {
       const zip = new JSZip();
       
       completedFiles.forEach(f => {
-        const fileName = f.name.startsWith('fixed_') ? f.name : `fixed_${f.name}`;
+        // Use the original name directly without 'fixed_' prefix
+        const fileName = f.name;
         zip.file(fileName, f.fixedBlob!);
       });
 
@@ -109,9 +124,14 @@ const App: React.FC = () => {
       const url = URL.createObjectURL(content);
       const a = document.createElement('a');
       a.href = url;
-      a.download = completedFiles.length === 1 
-        ? `fixed_${completedFiles[0].name.replace('.mp3', '')}.zip` 
-        : "fixed_music_collection.zip";
+      
+      // Also cleanup the ZIP filename itself
+      if (completedFiles.length === 1) {
+        a.download = `${completedFiles[0].name.replace(/\.mp3$/i, '')}.zip`;
+      } else {
+        a.download = "music_collection.zip";
+      }
+
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -246,6 +266,7 @@ const App: React.FC = () => {
                       <div className="flex items-center">
                         <span className="text-sm font-medium text-slate-800 truncate max-w-xs">{f.name}</span>
                       </div>
+                      {f.folderName && <div className="text-[10px] text-slate-400">フォルダ: {f.folderName}</div>}
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
@@ -269,7 +290,8 @@ const App: React.FC = () => {
                       {f.metadata ? (
                         <div className="text-xs text-slate-500 leading-tight">
                           <p className="font-semibold text-slate-700 truncate">{f.metadata.title}</p>
-                          <p className="truncate">{f.metadata.artist} - {f.metadata.album}</p>
+                          <p className="truncate text-blue-600">{f.metadata.album}</p>
+                          <p className="truncate">{f.metadata.artist}</p>
                         </div>
                       ) : (
                         <span className="text-xs text-slate-300">--</span>
@@ -293,7 +315,8 @@ const App: React.FC = () => {
             <ul className="list-disc list-inside space-y-1">
               <li>Windows Media Player等で取り込んだ曲が「」のように化ける現象を解決します。</li>
               <li>変換後のファイルは、ID3v2.3形式・UTF-16エンコーディングとして保存されます。</li>
-              <li>変換されたファイルは、単一ファイルであってもフォルダであっても、常にZIP圧縮された状態でダウンロードされます。</li>
+              <li>フォルダー単位でアップロードした場合、そのフォルダー名をアルバム名として自動設定します。</li>
+              <li>変換されたファイルは、ZIP圧縮された状態でダウンロードされます。</li>
             </ul>
           </div>
           <p>© 2024 Music Tag Fixer Utility - ブラウザ内ですべての処理を行うため、ファイルがサーバーに送信されることはありません。</p>
