@@ -3,8 +3,6 @@ import { AudioMetadata } from '../types.ts';
 import ID3Writer from 'browser-id3-writer';
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 /**
  * 文字列が有効なUTF-8かどうかを判定する補助関数
  */
@@ -20,14 +18,11 @@ const isLikelyUtf8 = (bytes: Uint8Array): boolean => {
 
 /**
  * 既存のID3タグを解析します。
- * Windowsで正しく見える場合はUTF-8やUnicodeの可能性が高いため、
- * 誤ってShift-JIS変換をかけないようにガードを入れます。
  */
 export const parseMetadata = async (file: File, folderHint?: string): Promise<AudioMetadata> => {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   
-  // デフォルト値としてファイル名を使用（ブラウザのfile.nameは常に正しいUnicode）
   let title = file.name.replace(/\.[^/.]+$/, "");
   let artist = "不明なアーティスト";
   let album = folderHint || "不明なアルバム";
@@ -43,17 +38,13 @@ export const parseMetadata = async (file: File, folderHint?: string): Promise<Au
           
           if (content.length === 0) return null;
 
-          // encoding 0 は「ISO-8859-1」だが、日本のレガシー環境では「Shift-JIS」として使われる。
-          // ただし、現代のファイルではここにUTF-8が入っていることもあるため、判定を行う。
           if (encoding === 0) {
             if (isLikelyUtf8(content)) {
               return new TextDecoder('utf-8').decode(content).replace(/\0/g, '').trim();
             } else {
-              // UTF-8として不当ならShift-JISとしてデコード
               return new TextDecoder('shift-jis').decode(content).replace(/\0/g, '').trim();
             }
           }
-          // encoding 1(UTF-16), 2(UTF-16BE), 3(UTF-8) は標準デコーダーを使用
           try {
             const dec = encoding === 1 || encoding === 2 ? new TextDecoder('utf-16') : new TextDecoder('utf-8');
             return dec.decode(content).replace(/\0/g, '').trim();
@@ -69,7 +60,6 @@ export const parseMetadata = async (file: File, folderHint?: string): Promise<Au
     const ar = findFrame('TPE1');
     const al = findFrame('TALB');
 
-    // タグが「明らかに文字化け（制御文字だらけ等）」している場合は、ファイル名を優先するロジック
     const isJunk = (str: string | null) => !str || /[\u0000-\u0008\u000B-\u000C\u000E-\u001F]/.test(str);
 
     if (!isJunk(t)) title = t!;
@@ -87,20 +77,22 @@ export const parseMetadata = async (file: File, folderHint?: string): Promise<Au
 
 /**
  * Gemini APIを使用して、ファイル名から情報を推測します。
- * 「Windowsでファイル名が正しく見えている」という前提を強く持たせます。
  */
 export const inferMetadataWithAI = async (filename: string, foldername?: string): Promise<Partial<AudioMetadata>> => {
+  // CRITICAL: SDKの指示に従い、インスタンスは関数内で作成する
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `ユーザーはWindowsエクスプローラーで正しく表示されているファイル名を元に、音楽タグを整理したいと考えています。
-      内部タグが壊れている可能性があるため、提供する「ファイル名」から情報を抽出してください。
+      提供する「ファイル名」から情報を抽出してください。
       
       ファイル名: "${filename}"
       親フォルダ名: "${foldername || 'なし'}"
       
       出力項目:
-      - title: 曲名（トラック番号、拡張子、[PV]などの付加情報は削除）
+      - title: 曲名（トラック番号、拡張子、付加情報は削除）
       - artist: 歌手名（不明なら"不明なアーティスト"）
       - album: アルバム名（フォルダ名から推測、不明なら"不明なアルバム"）`,
       config: {
@@ -117,7 +109,9 @@ export const inferMetadataWithAI = async (filename: string, foldername?: string)
       },
     });
 
-    return JSON.parse(response.text);
+    // response.text プロパティを直接参照
+    const text = response.text || "{}";
+    return JSON.parse(text);
   } catch (error) {
     console.error("AI inference failed:", error);
     return {};
