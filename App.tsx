@@ -11,12 +11,6 @@ const MusicIcon = () => (
   </svg>
 );
 
-const FolderIcon = () => (
-  <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-  </svg>
-);
-
 const SparklesIcon = () => (
   <svg className="w-4 h-4 text-amber-500 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
     <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z" clipRule="evenodd" />
@@ -41,9 +35,14 @@ const App: React.FC = () => {
   const [isZipping, setIsZipping] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isInferring, setIsInferring] = useState(false);
+  const [shouldOrganize, setShouldOrganize] = useState(true);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const sanitizeFolderName = (name: string): string => {
+    return name.replace(/[\\/:*?"<>|]/g, '_').trim() || 'Unknown';
+  };
 
   const processFileEntry = async (entry: FileSystemEntry, path: string = ''): Promise<ProcessingFile[]> => {
     if (entry.isFile) {
@@ -124,8 +123,8 @@ const App: React.FC = () => {
         metadata: {
           originalEncoding: 'UTF-8' as any,
           title: aiResult.title || f.name.replace(/\.[^/.]+$/, ""),
-          artist: aiResult.artist || "不明",
-          album: aiResult.album || f.folderName || "不明"
+          artist: aiResult.artist || "不明なアーティスト",
+          album: aiResult.album || f.folderName || "不明なアルバム"
         }
       };
     }));
@@ -140,8 +139,8 @@ const App: React.FC = () => {
           ...f,
           metadata: {
             title: f.name.replace(/\.[^/.]+$/, ""),
-            artist: "不明",
-            album: f.folderName || "不明",
+            artist: "不明なアーティスト",
+            album: f.folderName || "不明なアルバム",
             originalEncoding: 'UTF-8' as any
           }
         };
@@ -156,7 +155,6 @@ const App: React.FC = () => {
       const f = files[i];
       setFiles(prev => prev.map(item => item.id === f.id ? { ...item, status: 'processing' } : item));
       try {
-        // メタデータがまだない場合、ファイルから読み取る（この時にUTF-8優先ガードが働く）
         const metadata = f.metadata || await parseMetadata(f.file, f.folderName);
         const fixedBlob = await fixFileTags(f.file, metadata);
         setFiles(prev => prev.map(item => item.id === f.id ? { ...item, status: 'completed', metadata, fixedBlob } : item));
@@ -173,12 +171,20 @@ const App: React.FC = () => {
     setIsZipping(true);
     try {
       const zip = new JSZip();
-      completedFiles.forEach(f => zip.file(f.name, f.fixedBlob!));
+      completedFiles.forEach(f => {
+        let zipPath = f.name;
+        if (shouldOrganize && f.metadata) {
+          const artist = sanitizeFolderName(f.metadata.artist || 'Unknown Artist');
+          const album = sanitizeFolderName(f.metadata.album || 'Unknown Album');
+          zipPath = `${artist}/${album}/${f.name}`;
+        }
+        zip.file(zipPath, f.fixedBlob!);
+      });
       const content = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(content);
       const a = document.createElement('a');
       a.href = url;
-      a.download = completedFiles.length === 1 ? `${completedFiles[0].name.replace(/\.mp3$/i, '')}.zip` : "music_collection.zip";
+      a.download = "music_library_fixed.zip";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -196,8 +202,8 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen p-4 md:p-8 max-w-5xl mx-auto">
       <header className="mb-8 text-center">
-        <h1 className="text-3xl font-bold text-slate-800 mb-2">🚗 Car Audio Tag Fixer</h1>
-        <p className="text-slate-600 font-medium">Windowsで正しく見えるファイル名を最優先して、タグを美しく修正します。</p>
+        <h1 className="text-3xl font-bold text-slate-800 mb-2">🚗 Car Audio Library Fixer</h1>
+        <p className="text-slate-600 font-medium">Windowsで取り込んだ曲を自動整理して、カーオーディオでの文字化けを直します。</p>
       </header>
 
       <main className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200">
@@ -210,12 +216,12 @@ const App: React.FC = () => {
           <div className="flex flex-col items-center justify-center space-y-6">
             <div className="flex flex-col items-center text-center">
               <div className={`p-4 rounded-full mb-4 transition-transform duration-300 ${isDragging ? 'scale-125' : ''}`}><MusicIcon /></div>
-              <h2 className="text-xl font-semibold text-slate-700">ファイルまたはフォルダをドロップ</h2>
-              <p className="text-slate-400 text-sm mt-1">Windowsで正しく見えているファイルをそのまま追加してください</p>
+              <h2 className="text-xl font-semibold text-slate-700">音楽ファイルやフォルダをドロップ</h2>
+              <p className="text-slate-400 text-sm mt-1">複数のフォルダをまとめて追加して、一気に整理できます</p>
             </div>
             <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md">
-              <button onClick={() => fileInputRef.current?.click()} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-white border border-slate-200 rounded-xl hover:border-blue-500 hover:text-blue-600 transition-all font-medium text-slate-600">ファイルを選択</button>
-              <button onClick={() => folderInputRef.current?.click()} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-white border border-slate-200 rounded-xl hover:border-emerald-500 hover:text-emerald-600 transition-all font-medium text-slate-600">フォルダを選択</button>
+              <button onClick={() => fileInputRef.current?.click()} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-white border border-slate-200 rounded-xl hover:border-blue-500 hover:text-blue-600 transition-all font-medium text-slate-600 shadow-sm">ファイル選択</button>
+              <button onClick={() => folderInputRef.current?.click()} className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-white border border-slate-200 rounded-xl hover:border-emerald-500 hover:text-emerald-600 transition-all font-medium text-slate-600 shadow-sm">フォルダごと選択</button>
             </div>
           </div>
           <input type="file" ref={fileInputRef} onChange={(e) => addFilesFromInput(e.target.files)} multiple accept=".mp3" className="hidden" />
@@ -223,14 +229,26 @@ const App: React.FC = () => {
         </div>
 
         {files.length > 0 && (
-          <div className="px-6 py-4 bg-white border-b border-slate-100 flex flex-wrap justify-between items-center gap-4">
-            <div className="flex items-center gap-4">
-              <span className="text-sm font-bold bg-slate-100 px-3 py-1 rounded-full text-slate-600">{files.length} 曲</span>
+          <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex flex-wrap justify-between items-center gap-4">
+            <div className="flex items-center gap-6">
+              <span className="text-sm font-bold bg-white border border-slate-200 px-3 py-1 rounded-full text-slate-600 shadow-sm">{files.length} 曲を追加済み</span>
+              
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <input 
+                  type="checkbox" 
+                  checked={shouldOrganize} 
+                  onChange={(e) => setShouldOrganize(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                />
+                <span className="text-sm font-bold text-slate-600 group-hover:text-blue-600 transition-colors">
+                  アーティスト/アルバムごとに整理する
+                </span>
+              </label>
+
               <button onClick={inferAllMetadata} disabled={isInferring || status === AppStatus.PROCESSING} className="flex items-center gap-1.5 text-sm font-bold text-amber-600 hover:text-amber-700 disabled:opacity-50">
                 <SparklesIcon />
-                {isInferring ? 'ファイル名からAI解析中...' : 'ファイル名を元にAIで整理'}
+                {isInferring ? 'AI解析中...' : 'AIでタグを自動補完'}
               </button>
-              <button onClick={clearFiles} className="text-xs text-red-400 hover:text-red-600 ml-2">すべてクリア</button>
             </div>
             
             <div className="flex gap-2">
@@ -239,62 +257,74 @@ const App: React.FC = () => {
                   {status === AppStatus.PROCESSING ? '変換中...' : '変換を開始する'}
                 </button>
               ) : (
-                <button onClick={downloadAsZip} disabled={isZipping} className="flex items-center px-8 py-2.5 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-100 disabled:bg-slate-300">
-                  <ZipIcon />
-                  {isZipping ? 'ZIP作成中...' : 'ZIPを保存'}
-                </button>
+                <div className="flex gap-2">
+                  <button onClick={clearFiles} className="px-4 py-2.5 text-sm font-bold text-slate-500 hover:text-red-500">クリア</button>
+                  <button onClick={downloadAsZip} disabled={isZipping} className="flex items-center px-8 py-2.5 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-100 disabled:bg-slate-300">
+                    <ZipIcon />
+                    {isZipping ? 'ZIP作成中...' : '整理済みZIPを保存'}
+                  </button>
+                </div>
               )}
             </div>
           </div>
         )}
 
-        <div className="max-h-[50vh] overflow-y-auto">
+        <div className="max-h-[55vh] overflow-y-auto">
           {files.length > 0 && (
             <table className="w-full text-left border-collapse">
-              <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 z-10">
+              <thead className="sticky top-0 bg-white border-b border-slate-200 z-10 shadow-sm">
                 <tr>
-                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">元ファイル</th>
-                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">書き込み予定のタグ</th>
-                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap text-center">操作</th>
-                  <th className="px-6 py-3 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">状態</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">元のファイル名</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">修正後のタグ & 整理先</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">操作</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">状態</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {files.map(f => (
-                  <tr key={f.id} className="hover:bg-slate-50/50 transition-colors">
+                  <tr key={f.id} className="hover:bg-blue-50/30 transition-colors">
                     <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-slate-800 truncate max-w-[180px]" title={f.name}>{f.name}</div>
-                      <div className="text-[10px] text-slate-400 font-mono truncate max-w-[180px]">{f.folderName || 'Root'}</div>
+                      <div className="text-sm font-semibold text-slate-800 truncate max-w-[180px]" title={f.name}>{f.name}</div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate max-w-[180px]">
+                        元場所: {f.folderName || 'ルート'}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       {f.metadata ? (
-                        <div className="text-[11px] leading-tight max-w-[250px]">
-                          <div className="font-bold text-slate-700">{f.metadata.title}</div>
-                          <div className="text-blue-500 mt-0.5">{f.metadata.artist}</div>
-                          <div className="text-slate-400 italic">{f.metadata.album}</div>
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-bold text-slate-700">{f.metadata.title}</span>
+                          </div>
+                          <div className="text-[10px] text-blue-500 font-medium">アーティスト: {f.metadata.artist}</div>
+                          <div className="text-[10px] text-slate-400 italic">アルバム: {f.metadata.album}</div>
+                          {shouldOrganize && (
+                            <div className="mt-1 flex items-center gap-1 text-[9px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 w-fit font-mono">
+                              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                              ZIP内: {sanitizeFolderName(f.metadata.artist || '')}/{sanitizeFolderName(f.metadata.album || '')}/...
+                            </div>
+                          )}
                         </div>
                       ) : (
-                        <span className="text-[10px] text-slate-300 italic">自動解析待ち...</span>
+                        <span className="text-[10px] text-slate-300 italic">未解析...</span>
                       )}
                     </td>
                     <td className="px-6 py-4 text-center">
                       <button 
                         onClick={() => resetToFilename(f.id)}
-                        title="既存タグを無視してファイル名を採用"
-                        className="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded transition-colors whitespace-nowrap"
+                        className="text-[10px] font-bold bg-white border border-slate-200 hover:border-blue-300 text-slate-500 hover:text-blue-600 px-3 py-1.5 rounded-lg transition-all shadow-sm"
                       >
-                        ファイル名優先
+                        リセット
                       </button>
                     </td>
                     <td className="px-6 py-4">
                       {f.status === 'processing' ? (
-                        <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                        <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                       ) : f.status === 'completed' ? (
                         <CheckCircleIcon />
                       ) : f.status === 'error' ? (
-                        <span className="text-[10px] text-red-500 font-bold">ERR</span>
+                        <span className="text-[10px] text-red-500 font-extrabold bg-red-50 px-2 py-0.5 rounded">ERR</span>
                       ) : (
-                        <span className="text-[10px] text-slate-400 font-bold">待機</span>
+                        <span className="text-[10px] text-slate-400 font-bold">待機中</span>
                       )}
                     </td>
                   </tr>
@@ -305,28 +335,37 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      <footer className="mt-12 text-center text-slate-400 text-sm max-w-3xl mx-auto">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-          <div className="p-5 bg-blue-50 rounded-2xl border border-blue-100 text-slate-700 text-left">
-            <h3 className="font-bold mb-2 text-blue-700 flex items-center gap-2">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              文字化け防止の仕組み
+      <footer className="mt-12 text-center text-slate-400 text-sm max-w-4xl mx-auto border-t border-slate-100 pt-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 text-left">
+          <div className="p-4 bg-white rounded-xl border border-slate-100 shadow-sm">
+            <h3 className="font-bold mb-2 text-slate-700 text-xs flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full"></div>
+              文字化け防止
             </h3>
-            <p className="text-[11px] leading-relaxed">
-              既存のタグがUTF-8かShift-JISかを自動判定し、不適切な変換を防止します。Windowsで正しく見える情報は「ファイル名」に集約されていることが多いため、AIボタンを使うとファイル名を解析してタグを再構築します。
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              MP3の内部タグを Shift-JIS から UTF-16 へ強制変換します。これにより、古いカーオーディオでも日本語が正しく表示されます。
             </p>
           </div>
-          <div className="p-5 bg-amber-50 rounded-2xl border border-amber-100 text-slate-700 text-left">
-            <h3 className="font-bold mb-2 text-amber-700 flex items-center gap-2">
-              <SparklesIcon />
-              ファイル名優先ボタン
+          <div className="p-4 bg-white rounded-xl border border-slate-100 shadow-sm">
+            <h3 className="font-bold mb-2 text-slate-700 text-xs flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></div>
+              フォルダ自動整理
             </h3>
-            <p className="text-[11px] leading-relaxed">
-              もし解析結果が文字化けしている場合は、表の中の「ファイル名優先」ボタンを押してください。内部の壊れたタグを無視し、エクスプローラーで見えている正しい名称をタグとして採用します。
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              タグ情報をもとに、ZIP内のファイルをアーティスト名やアルバム名ごとに階層化します。ライブラリがスッキリ片付きます。
+            </p>
+          </div>
+          <div className="p-4 bg-white rounded-xl border border-slate-100 shadow-sm">
+            <h3 className="font-bold mb-2 text-slate-700 text-xs flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-amber-500 rounded-full"></div>
+              AIによる補完
+            </h3>
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              ファイル名が「01. 曲名.mp3」のように汚い場合でも、AIが本来の曲名や歌手名を推測してタグに書き込みます。
             </p>
           </div>
         </div>
-        <p>© 2024 Music Tag Fixer Utility</p>
+        <p className="font-medium">© 2024 Music Library Fixer Utility</p>
       </footer>
     </div>
   );
