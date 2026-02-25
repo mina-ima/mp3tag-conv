@@ -35,6 +35,7 @@ const App: React.FC = () => {
   const [isZipping, setIsZipping] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isInferring, setIsInferring] = useState(false);
+  const [bulkArtist, setBulkArtist] = useState("");
   const [shouldOrganize, setShouldOrganize] = useState(true);
   const [splitMode, setSplitMode] = useState<string>("0"); 
   
@@ -62,6 +63,7 @@ const App: React.FC = () => {
               name: file.name,
               isWma,
               isM4a,
+              selected: true,
               folderName,
               status: 'pending',
               progress: 0
@@ -123,6 +125,7 @@ const App: React.FC = () => {
           name: file.name,
           isWma: ext.endsWith('.wma'),
           isM4a: ext.endsWith('.m4a'),
+          selected: true,
           folderName,
           status: 'pending',
           progress: 0
@@ -136,7 +139,7 @@ const App: React.FC = () => {
     const updatedFiles = [...files];
     for (let i = 0; i < updatedFiles.length; i++) {
       const f = updatedFiles[i];
-      if (f.status === 'completed') continue;
+      if (f.status === 'completed' || !f.selected) continue;
       const inferred = await inferMetadataWithAI(f.name, f.folderName);
       if (Object.keys(inferred).length > 0) {
         updatedFiles[i] = {
@@ -170,6 +173,41 @@ const App: React.FC = () => {
     }));
   };
 
+  const applyBulkArtist = () => {
+    if (!bulkArtist.trim()) return;
+    setFiles(prev => prev.map(f => {
+      if (!f.selected) return f;
+      return {
+        ...f,
+        metadata: {
+          ...(f.metadata || { title: f.name.replace(/\.[^/.]+$/, ""), album: f.folderName || "不明なアルバム", originalEncoding: 'Unknown' }),
+          artist: bulkArtist
+        }
+      };
+    }));
+  };
+
+  const applyFolderToAlbum = () => {
+    setFiles(prev => prev.map(f => {
+      if (!f.selected) return f;
+      return {
+        ...f,
+        metadata: {
+          ...(f.metadata || { title: f.name.replace(/\.[^/.]+$/, ""), artist: "不明なアーティスト", originalEncoding: 'Unknown' }),
+          album: f.folderName || (f.metadata?.album || "不明なアルバム")
+        }
+      };
+    }));
+  };
+
+  const toggleSelect = (id: string) => {
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, selected: !f.selected } : f));
+  };
+
+  const toggleSelectAll = (selected: boolean) => {
+    setFiles(prev => prev.map(f => ({ ...f, selected })));
+  };
+
   const startProcessing = async () => {
     setStatus(AppStatus.LOADING_FFMPEG);
     try { await loadFFmpeg(); } catch (e) {
@@ -180,7 +218,7 @@ const App: React.FC = () => {
     
     setStatus(AppStatus.PROCESSING);
     for (const f of files) {
-      if (f.status === 'completed') continue;
+      if (f.status === 'completed' || !f.selected) continue;
       
       let workingBlob: Blob = f.file;
       let workingName = f.name;
@@ -301,9 +339,39 @@ const App: React.FC = () => {
                 <span className="text-xs font-bold text-slate-600 group-hover:text-blue-600 transition-colors">フォルダ自動整理</span>
               </label>
 
-              <button onClick={inferAllMetadata} disabled={isInferring || status === AppStatus.PROCESSING} className="flex items-center gap-1.5 text-xs font-bold text-amber-600 hover:text-amber-700 disabled:opacity-50 transition-colors">
-                <SparklesIcon /> {isInferring ? 'AI解析中...' : 'AIタグ補完'}
+              <button 
+                onClick={inferAllMetadata} 
+                disabled={isInferring || status === AppStatus.PROCESSING || !files.some(f => f.selected)} 
+                className="flex items-center gap-1.5 text-xs font-bold text-amber-600 hover:text-amber-700 disabled:opacity-50 transition-colors"
+              >
+                <SparklesIcon /> {isInferring ? 'AI解析中...' : '選択項目をAI解析'}
               </button>
+
+              <div className="flex items-center gap-2 bg-white px-3 py-1 rounded-lg border border-slate-200 shadow-sm ml-auto">
+                <input 
+                  type="text" 
+                  placeholder="一括アーティスト名" 
+                  value={bulkArtist} 
+                  onChange={(e) => setBulkArtist(e.target.value)}
+                  className="text-xs font-medium outline-none w-32"
+                />
+                <button 
+                  onClick={applyBulkArtist}
+                  disabled={!files.some(f => f.selected)}
+                  className="text-[10px] font-bold bg-slate-800 text-white px-2 py-1 rounded hover:bg-slate-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  選択項目に一括適用
+                </button>
+                <div className="w-px h-4 bg-slate-200 mx-1"></div>
+                <button 
+                  onClick={applyFolderToAlbum}
+                  disabled={!files.some(f => f.selected)}
+                  className="text-[10px] font-bold text-blue-600 hover:text-blue-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="選択したファイルの読み込み時のフォルダ名をアルバム名に設定します"
+                >
+                  フォルダ名をアルバムに反映
+                </button>
+              </div>
             </div>
             
             <div className="flex justify-between items-center">
@@ -326,65 +394,82 @@ const App: React.FC = () => {
           </div>
         )}
 
-        <div className="max-h-[45vh] overflow-y-auto">
-          <table className="w-full text-left">
-            <thead className="sticky top-0 bg-white border-b border-slate-200 z-10 shadow-sm">
+        <div className="max-h-[55vh] overflow-auto border-t border-slate-200">
+          <table className="w-full text-left border-collapse">
+            <thead className="sticky top-0 bg-slate-100 border-b border-slate-300 z-10 shadow-sm">
               <tr>
-                <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">ファイル</th>
-                <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">メタデータ</th>
-                <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">状況</th>
+                <th className="px-4 py-2 border-r border-slate-200 w-10">
+                  <input 
+                    type="checkbox" 
+                    checked={files.length > 0 && files.every(f => f.selected)} 
+                    onChange={(e) => toggleSelectAll(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300"
+                  />
+                </th>
+                <th className="px-4 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-tighter border-r border-slate-200 w-48">ファイル名</th>
+                <th className="px-4 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-tighter border-r border-slate-200">曲名 (Title)</th>
+                <th className="px-4 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-tighter border-r border-slate-200">アーティスト (Artist)</th>
+                <th className="px-4 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-tighter border-r border-slate-200">アルバム (Album)</th>
+                <th className="px-4 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-tighter w-24">状況</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
+            <tbody className="divide-y divide-slate-200">
               {files.map(f => (
-                <tr key={f.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="px-6 py-3">
+                <tr key={f.id} className={`hover:bg-blue-50/30 transition-colors group ${f.selected ? 'bg-blue-50/20' : ''}`}>
+                  <td className="px-4 py-2 border-r border-slate-100 text-center">
+                    <input 
+                      type="checkbox" 
+                      checked={!!f.selected} 
+                      onChange={() => toggleSelect(f.id)}
+                      className="w-4 h-4 rounded border-slate-300"
+                    />
+                  </td>
+                  <td className="px-4 py-2 border-r border-slate-100 bg-slate-50/30">
                     <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm ${f.isWma ? 'bg-orange-100 text-orange-600' : f.isM4a ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                      <span className={`text-[9px] font-bold px-1 py-0.5 rounded shadow-xs shrink-0 ${f.isWma ? 'bg-orange-100 text-orange-600' : f.isM4a ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
                         {f.isWma ? 'WMA' : f.isM4a ? 'M4A' : 'MP3'}
                       </span>
-                      <span className="text-sm font-medium text-slate-700 truncate max-w-[200px]">{f.name}</span>
+                      <span className="text-[11px] font-medium text-slate-500 truncate" title={f.name}>{f.name}</span>
                     </div>
                   </td>
-                  <td className="px-6 py-3">
-                    <div className="flex flex-col gap-1.5 min-w-[200px]">
-                      <input 
-                        type="text" 
-                        value={f.metadata?.title || f.name.replace(/\.[^/.]+$/, "")} 
-                        onChange={(e) => updateFileMetadata(f.id, 'title', e.target.value)}
-                        placeholder="曲名"
-                        className="text-[11px] font-bold text-slate-800 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-400 outline-none w-full"
-                      />
-                      <input 
-                        type="text" 
-                        value={f.metadata?.artist || "不明なアーティスト"} 
-                        onChange={(e) => updateFileMetadata(f.id, 'artist', e.target.value)}
-                        placeholder="アーティスト名"
-                        className="text-[10px] text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-400 outline-none w-full"
-                      />
-                      <input 
-                        type="text" 
-                        value={f.metadata?.album || f.folderName || "不明なアルバム"} 
-                        onChange={(e) => updateFileMetadata(f.id, 'album', e.target.value)}
-                        placeholder="アルバム名"
-                        className="text-[10px] text-slate-400 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-400 outline-none w-full"
-                      />
-                    </div>
+                  <td className="p-0 border-r border-slate-100 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-400 focus-within:ring-inset">
+                    <input 
+                      type="text" 
+                      value={f.metadata?.title || f.name.replace(/\.[^/.]+$/, "")} 
+                      onChange={(e) => updateFileMetadata(f.id, 'title', e.target.value)}
+                      className="w-full h-full px-4 py-2 text-xs font-medium text-slate-800 bg-transparent outline-none"
+                    />
                   </td>
-                  <td className="px-6 py-3">
+                  <td className="p-0 border-r border-slate-100 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-400 focus-within:ring-inset">
+                    <input 
+                      type="text" 
+                      value={f.metadata?.artist || "不明なアーティスト"} 
+                      onChange={(e) => updateFileMetadata(f.id, 'artist', e.target.value)}
+                      className="w-full h-full px-4 py-2 text-xs text-slate-600 bg-transparent outline-none"
+                    />
+                  </td>
+                  <td className="p-0 border-r border-slate-100 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-400 focus-within:ring-inset">
+                    <input 
+                      type="text" 
+                      value={f.metadata?.album || f.folderName || "不明なアルバム"} 
+                      onChange={(e) => updateFileMetadata(f.id, 'album', e.target.value)}
+                      className="w-full h-full px-4 py-2 text-xs text-slate-500 bg-transparent outline-none"
+                    />
+                  </td>
+                  <td className="px-4 py-2">
                     <div className="flex items-center gap-2">
                       {f.status === 'converting' && (
-                        <div className="flex items-center gap-2 w-full">
-                          <div className="h-1.5 w-16 bg-slate-200 rounded-full overflow-hidden">
+                        <div className="flex items-center gap-1 w-full">
+                          <div className="h-1 w-8 bg-slate-200 rounded-full overflow-hidden">
                             <div className="h-full bg-orange-500 transition-all" style={{ width: `${f.progress}%` }}></div>
                           </div>
-                          <span className="text-[10px] text-orange-600 font-bold">変換中...</span>
+                          <span className="text-[9px] text-orange-600 font-bold whitespace-nowrap">変換中</span>
                         </div>
                       )}
-                      {f.status === 'processing' && <span className="text-[10px] text-blue-500 font-bold animate-pulse">処理中...</span>}
+                      {f.status === 'processing' && <span className="text-[9px] text-blue-500 font-bold animate-pulse">処理中</span>}
                       {f.status === 'completed' && <CheckCircleIcon />}
-                      {f.status === 'error' && <span className="text-[10px] text-red-500 font-bold">{f.error}</span>}
-                      {f.status === 'pending' && <span className="text-[10px] text-slate-400">待機</span>}
+                      {f.status === 'error' && <span className="text-[9px] text-red-500 font-bold">{f.error}</span>}
+                      {f.status === 'pending' && <span className="text-[9px] text-slate-400">待機</span>}
                     </div>
                   </td>
                 </tr>
@@ -401,7 +486,8 @@ const App: React.FC = () => {
         <div className="p-2 bg-blue-100 rounded-full"><svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div>
         <div className="text-xs text-blue-800 leading-relaxed space-y-1">
           <p><strong>無音分割について:</strong> アルバム丸ごと1つのMP3になっている場合などに有効です。2秒以上の無音を検知して自動でファイルを切り分けます。</p>
-          <p><strong>フォルダ整理:</strong> アーティスト名とアルバム名のフォルダを自動作成し、カーオーディオの画面で見やすく配置します。</p>
+          <p><strong>一括編集:</strong> 同じCDのデータであれば、右上の入力欄からアーティスト名を一括で設定できます。また、「フォルダ名をアルバムに反映」ボタンを使うと、読み込み時のフォルダ名をそのままアルバム名（フォルダ分けの単位）として利用できます。</p>
+          <p><strong>フォルダ整理:</strong> アーティスト名とアルバム名のフォルダを自動作成し、カーオーディオの画面で見やすく配置します。元のフォルダ分けを維持したい場合は、フォルダ名をアルバム名に反映させてからダウンロードしてください。</p>
           <p><strong>手動編集:</strong> リスト内の曲名、アーティスト名、アルバム名は直接クリックして編集可能です。AI補完が間違っている場合や、情報が不足している場合に活用してください。</p>
         </div>
       </div>

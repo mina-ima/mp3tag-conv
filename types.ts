@@ -13,6 +13,7 @@ export interface ProcessingFile {
   status: 'pending' | 'converting' | 'processing' | 'completed' | 'error';
   isWma: boolean;
   isM4a: boolean;
+  selected?: boolean;
   folderName?: string;
   metadata?: AudioMetadata;
   fixedBlob?: Blob;
