@@ -1,5 +1,5 @@
 {
   "name": "Car Audio Tag Fixer",
-  "description": "Fix character encoding issues (mojibake) in MP3 files for car audio systems. Supports single files and folder uploads, converting legacy Shift-JIS tags to modern UTF-16 for maximum compatibility.",
+  "description": "Fix character encoding issues (mojibake) in MP3 files for car audio systems. Supports single files and folder uploads, converting legacy Shift-JIS tags to modern UTF-16 for maximum compatibility. Also supports converting WMA and M4A files to MP3.",
   "requestFramePermissions": []
 }

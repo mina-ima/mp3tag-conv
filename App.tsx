@@ -1,8 +1,8 @@
 
 import React, { useState, useCallback, useRef } from 'react';
-import { ProcessingFile, AppStatus } from './types.ts';
+import { ProcessingFile, AppStatus, AudioMetadata } from './types.ts';
 import { parseMetadata, fixFileTags, inferMetadataWithAI } from './services/id3Service.ts';
-import { convertWmaToMp3, loadFFmpeg, splitMp3 } from './services/audioConverter.ts';
+import { convertToMp3, loadFFmpeg, splitMp3 } from './services/audioConverter.ts';
 import JSZip from 'jszip';
 
 const MusicIcon = () => (
@@ -52,7 +52,8 @@ const App: React.FC = () => {
         fileEntry.file((file) => {
           const isMp3 = file.name.toLowerCase().endsWith('.mp3');
           const isWma = file.name.toLowerCase().endsWith('.wma');
-          if (isMp3 || isWma) {
+          const isM4a = file.name.toLowerCase().endsWith('.m4a');
+          if (isMp3 || isWma || isM4a) {
             const pathParts = path.split('/');
             const folderName = pathParts.length > 1 ? pathParts[pathParts.length - 2] : undefined;
             resolve([{
@@ -60,6 +61,7 @@ const App: React.FC = () => {
               file,
               name: file.name,
               isWma,
+              isM4a,
               folderName,
               status: 'pending',
               progress: 0
@@ -106,7 +108,7 @@ const App: React.FC = () => {
     const newFiles: ProcessingFile[] = Array.from(fileList)
       .filter(file => {
         const ext = file.name.toLowerCase();
-        return ext.endsWith('.mp3') || ext.endsWith('.wma');
+        return ext.endsWith('.mp3') || ext.endsWith('.wma') || ext.endsWith('.m4a');
       })
       .map(file => {
         const ext = file.name.toLowerCase();
@@ -120,6 +122,7 @@ const App: React.FC = () => {
           file,
           name: file.name,
           isWma: ext.endsWith('.wma'),
+          isM4a: ext.endsWith('.m4a'),
           folderName,
           status: 'pending',
           progress: 0
@@ -151,6 +154,22 @@ const App: React.FC = () => {
     setIsInferring(false);
   };
 
+  const updateFileMetadata = (id: string, field: keyof AudioMetadata, value: string) => {
+    setFiles(prev => prev.map(f => {
+      if (f.id === id) {
+        const currentMeta = f.metadata || { title: f.name.replace(/\.[^/.]+$/, ""), artist: "不明なアーティスト", album: f.folderName || "不明なアルバム", originalEncoding: 'Unknown' };
+        return {
+          ...f,
+          metadata: {
+            ...currentMeta,
+            [field]: value
+          }
+        };
+      }
+      return f;
+    }));
+  };
+
   const startProcessing = async () => {
     setStatus(AppStatus.LOADING_FFMPEG);
     try { await loadFFmpeg(); } catch (e) {
@@ -166,13 +185,14 @@ const App: React.FC = () => {
       let workingBlob: Blob = f.file;
       let workingName = f.name;
 
-      if (f.isWma) {
+      if (f.isWma || f.isM4a) {
         setFiles(prev => prev.map(item => item.id === f.id ? { ...item, status: 'converting' } : item));
         try {
-          workingBlob = await convertWmaToMp3(f.file, (p) => {
+          const ext = f.isWma ? 'wma' : 'm4a';
+          workingBlob = await convertToMp3(f.file, ext, (p) => {
             setFiles(prev => prev.map(item => item.id === f.id ? { ...item, progress: p } : item));
           });
-          workingName = f.name.replace(/\.wma$/i, '.mp3');
+          workingName = f.name.replace(/\.(wma|m4a)$/i, '.mp3');
         } catch (err) {
           setFiles(prev => prev.map(item => item.id === f.id ? { ...item, status: 'error', error: '変換失敗' } : item));
           continue;
@@ -245,17 +265,17 @@ const App: React.FC = () => {
           className={`p-10 border-b border-slate-100 transition-all duration-300 ${isDragging ? 'bg-blue-50 border-blue-400' : 'bg-slate-50/50'}`}
         >
           <div className="flex flex-col items-center justify-center space-y-6">
-            <div className="flex flex-col items-center text-center">
-              <div className="p-4 rounded-full mb-4 bg-white shadow-sm ring-1 ring-slate-100"><MusicIcon /></div>
-              <h2 className="text-xl font-semibold text-slate-700">MP3 / WMAをドロップ</h2>
-              <p className="text-slate-400 text-sm mt-1">1つの長いファイルを自動で曲ごとに分けることもできます</p>
-            </div>
+              <div className="flex flex-col items-center text-center">
+                <div className="p-4 rounded-full mb-4 bg-white shadow-sm ring-1 ring-slate-100"><MusicIcon /></div>
+                <h2 className="text-xl font-semibold text-slate-700">MP3 / WMA / M4Aをドロップ</h2>
+                <p className="text-slate-400 text-sm mt-1">1つの長いファイルを自動で曲ごとに分けることもできます</p>
+              </div>
             <div className="flex flex-col sm:flex-row gap-3 w-full max-w-md">
               <button onClick={() => fileInputRef.current?.click()} className="flex-1 px-5 py-3 bg-white border border-slate-200 rounded-xl hover:border-blue-500 hover:text-blue-600 transition-all font-bold text-slate-600 shadow-sm">ファイル選択</button>
               <button onClick={() => folderInputRef.current?.click()} className="flex-1 px-5 py-3 bg-white border border-slate-200 rounded-xl hover:border-emerald-500 hover:text-emerald-600 transition-all font-bold text-slate-600 shadow-sm">フォルダ選択</button>
             </div>
           </div>
-          <input type="file" ref={fileInputRef} onChange={(e) => addFilesFromInput(e.target.files)} multiple accept=".mp3,.wma" className="hidden" />
+            <input type="file" ref={fileInputRef} onChange={(e) => addFilesFromInput(e.target.files)} multiple accept=".mp3,.wma,.m4a" className="hidden" />
           <input type="file" ref={folderInputRef} onChange={(e) => addFilesFromInput(e.target.files)} {...({ webkitdirectory: "", directory: "" } as any)} className="hidden" />
         </div>
 
@@ -320,21 +340,36 @@ const App: React.FC = () => {
                 <tr key={f.id} className="hover:bg-slate-50/80 transition-colors">
                   <td className="px-6 py-3">
                     <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm ${f.isWma ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'}`}>
-                        {f.isWma ? 'WMA' : 'MP3'}
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm ${f.isWma ? 'bg-orange-100 text-orange-600' : f.isM4a ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                        {f.isWma ? 'WMA' : f.isM4a ? 'M4A' : 'MP3'}
                       </span>
                       <span className="text-sm font-medium text-slate-700 truncate max-w-[200px]">{f.name}</span>
                     </div>
                   </td>
                   <td className="px-6 py-3">
-                    {f.metadata ? (
-                      <div className="text-[11px] leading-tight">
-                        <div className="font-bold text-slate-800">{f.metadata.title}</div>
-                        <div className="text-slate-500">{f.metadata.artist}</div>
-                      </div>
-                    ) : (
-                      <span className="text-[10px] text-slate-300 italic">準備完了</span>
-                    )}
+                    <div className="flex flex-col gap-1.5 min-w-[200px]">
+                      <input 
+                        type="text" 
+                        value={f.metadata?.title || f.name.replace(/\.[^/.]+$/, "")} 
+                        onChange={(e) => updateFileMetadata(f.id, 'title', e.target.value)}
+                        placeholder="曲名"
+                        className="text-[11px] font-bold text-slate-800 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-400 outline-none w-full"
+                      />
+                      <input 
+                        type="text" 
+                        value={f.metadata?.artist || "不明なアーティスト"} 
+                        onChange={(e) => updateFileMetadata(f.id, 'artist', e.target.value)}
+                        placeholder="アーティスト名"
+                        className="text-[10px] text-slate-500 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-400 outline-none w-full"
+                      />
+                      <input 
+                        type="text" 
+                        value={f.metadata?.album || f.folderName || "不明なアルバム"} 
+                        onChange={(e) => updateFileMetadata(f.id, 'album', e.target.value)}
+                        placeholder="アルバム名"
+                        className="text-[10px] text-slate-400 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-400 outline-none w-full"
+                      />
+                    </div>
                   </td>
                   <td className="px-6 py-3">
                     <div className="flex items-center gap-2">
@@ -367,6 +402,7 @@ const App: React.FC = () => {
         <div className="text-xs text-blue-800 leading-relaxed space-y-1">
           <p><strong>無音分割について:</strong> アルバム丸ごと1つのMP3になっている場合などに有効です。2秒以上の無音を検知して自動でファイルを切り分けます。</p>
           <p><strong>フォルダ整理:</strong> アーティスト名とアルバム名のフォルダを自動作成し、カーオーディオの画面で見やすく配置します。</p>
+          <p><strong>手動編集:</strong> リスト内の曲名、アーティスト名、アルバム名は直接クリックして編集可能です。AI補完が間違っている場合や、情報が不足している場合に活用してください。</p>
         </div>
       </div>
     </div>

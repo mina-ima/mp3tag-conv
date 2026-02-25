@@ -16,12 +16,13 @@ export const loadFFmpeg = async () => {
   return ffmpeg;
 };
 
-export const convertWmaToMp3 = async (
+export const convertToMp3 = async (
   file: File, 
+  extension: string,
   onProgress: (progress: number) => void
 ): Promise<Blob> => {
   const instance = await loadFFmpeg();
-  const inputName = 'input.wma';
+  const inputName = `input.${extension}`;
   const outputName = 'output.mp3';
 
   instance.on('progress', ({ progress }) => {
