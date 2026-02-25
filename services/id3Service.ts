@@ -138,5 +138,5 @@ export const fixFileTags = async (file: File, metadata: AudioMetadata): Promise<
   if (metadata.album) writer.setFrame('TALB', metadata.album);
   
   writer.addTag();
-  return new Blob([writer.arrayBuffer], { type: 'audio/mpeg' });
+  return writer.getBlob();
 };
